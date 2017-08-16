@@ -1,0 +1,7 @@
+$ ssh-add ~/.ssh/dmc_rsa
+$ ssh-keygen -t rsa -b 4096 -C "smartalkaudio@gmail.com"
+
+$ sudo cpufreq-set -c3 -g performance
+$ grep MHz /proc/cpuinfo
+$ cat /sys/devices/virtual/thermal/thermal_zone2/temp
+$ sudo turbostat
