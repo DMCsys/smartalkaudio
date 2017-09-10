@@ -17,8 +17,16 @@ package com.example.android.uamp.ui;
 
 import android.content.ComponentName;
 import android.content.Intent;
+import android.content.Context;
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.drawable.Drawable;
+import android.graphics.Paint;
+import android.graphics.Rect;
+import android.media.MediaPlayer;
+import android.media.audiofx.Equalizer;
+import android.media.audiofx.Visualizer;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.RemoteException;
@@ -32,8 +40,12 @@ import android.support.v4.media.session.MediaControllerCompat;
 import android.support.v4.media.session.MediaSessionCompat;
 import android.support.v4.media.session.PlaybackStateCompat;
 import android.text.format.DateUtils;
+import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.CheckBox;
 import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -69,6 +81,14 @@ public class FullScreenPlayerActivity extends ActionBarCastActivity {
     private TextView mLine1;
     private TextView mLine2;
     private TextView mLine3;
+
+    private CheckBox mMicOn;
+    //private MediaPlayer mMediaPlayer;
+    private Equalizer mEqualizer;
+    private Visualizer mVisualizer;
+    private VisualizerView mVisualizerView;
+    //private static final float VISUALIZER_HEIGHT_DIP = 50f;
+
     private ProgressBar mLoading;
     private View mControllers;
     private Drawable mPauseDrawable;
@@ -212,8 +232,52 @@ public class FullScreenPlayerActivity extends ActionBarCastActivity {
             updateFromParams(getIntent());
         }
 
+        // Create the MediaPlayer
+        //mMediaPlayer = MediaPlayer.create(this, R.raw.test_cbr);
+        //LogHelper.d(TAG, "MediaPlayer audio session ID: " + mMediaPlayer.getAudioSessionId());
+
+        //setupVisualizerFxAndUI();
+
+        // Make sure the visualizer is enabled only when you actually want to receive data, and
+        // when it makes sense to receive data.
+        //mVisualizer.setEnabled(true);
+
+        // When the stream ends, we don't need to collect any more data. We don't do this in
+        // setupVisualizerFxAndUI because we likely want to have more, non-Visualizer related code
+        // in this callback.
+        //mMediaPlayer.setOnCompletionListener(new MediaPlayer.OnCompletionListener() {
+        //    public void onCompletion(MediaPlayer mediaPlayer) {
+        //        mVisualizer.setEnabled(false);
+        //    }
+        //});
+
+        //mMediaPlayer.start();
+        //LogHelper.d(TAG, "Playing audio...");
+
         mMediaBrowser = new MediaBrowserCompat(this,
             new ComponentName(this, MusicService.class), mConnectionCallback, null);
+    }
+
+    void setupVisualizerFxAndUI(/*MediaPlayer mediaPlayer*/) {
+        LinearLayout mLinearLayoutForVisualEQ = (LinearLayout) findViewById(R.id.visual_eq);
+        // Create a VisualizerView (defined below), which will render the simplified audio
+        // wave form to a Canvas.
+        mVisualizerView = new VisualizerView(this);
+        mLinearLayoutForVisualEQ.addView(mVisualizerView);
+
+        // Create the Visualizer object and attach it to our media player.
+        mVisualizer = new Visualizer(1/*mediaPlayer.getAudioSessionId()*/);
+        mVisualizer.setCaptureSize(Visualizer.getCaptureSizeRange()[1]);
+        mVisualizer.setDataCaptureListener(new Visualizer.OnDataCaptureListener() {
+            public void onWaveFormDataCapture(Visualizer visualizer, byte[] bytes,
+                                              int samplingRate) {
+                mVisualizerView.updateVisualizer(bytes);
+            }
+
+            public void onFftDataCapture(Visualizer visualizer, byte[] bytes, int samplingRate) {}
+        }, Visualizer.getMaxCaptureRate() / 2, true, false);
+
+        mVisualizer.setEnabled(true);
     }
 
     private void connectToSession(MediaSessionCompat.Token token) throws RemoteException {
@@ -237,6 +301,8 @@ public class FullScreenPlayerActivity extends ActionBarCastActivity {
                 state.getState() == PlaybackStateCompat.STATE_BUFFERING)) {
             scheduleSeekbarUpdate();
         }
+
+        setupVisualizerFxAndUI();
     }
 
     private void updateFromParams(Intent intent) {
@@ -411,5 +477,61 @@ public class FullScreenPlayerActivity extends ActionBarCastActivity {
             currentPosition += (int) timeDelta * mLastPlaybackState.getPlaybackSpeed();
         }
         mSeekbar.setProgress((int) currentPosition);
+    }
+}
+
+/**
+ * A simple class that draws waveform data received from a
+ * {@link Visualizer.OnDataCaptureListener#onWaveFormDataCapture }
+ */
+class VisualizerView extends View {
+    private byte[] mBytes;
+    private float[] mPoints;
+    private Rect mRect = new Rect();
+
+    private Paint mForePaint = new Paint();
+
+    public VisualizerView(Context context) {
+        super(context);
+        init();
+    }
+
+    private void init() {
+        mBytes = null;
+
+        mForePaint.setStrokeWidth(1f);
+        mForePaint.setAntiAlias(true);
+        mForePaint.setColor(Color.rgb(0, 128, 255));
+    }
+
+    public void updateVisualizer(byte[] bytes) {
+        mBytes = bytes;
+        invalidate();
+    }
+
+    @Override
+    protected void onDraw(Canvas canvas) {
+        super.onDraw(canvas);
+
+        if (mBytes == null) {
+            return;
+        }
+
+        if (mPoints == null || mPoints.length < mBytes.length * 4) {
+            mPoints = new float[mBytes.length * 4];
+        }
+
+        mRect.set(0, 0, getWidth(), getHeight());
+
+        for (int i = 0; i < mBytes.length - 1; i++) {
+            mPoints[i * 4] = mRect.width() * i / (mBytes.length - 1);
+            mPoints[i * 4 + 1] = mRect.height() / 2
+                    + ((byte) (mBytes[i] + 128)) * (mRect.height() / 2) / 128;
+            mPoints[i * 4 + 2] = mRect.width() * (i + 1) / (mBytes.length - 1);
+            mPoints[i * 4 + 3] = mRect.height() / 2
+                    + ((byte) (mBytes[i + 1] + 128)) * (mRect.height() / 2) / 128;
+        }
+
+        canvas.drawLines(mPoints, mForePaint);
     }
 }
